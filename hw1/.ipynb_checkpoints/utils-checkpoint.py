@@ -3,6 +3,12 @@ import shutil
 import logging
 import os
 import numpy as np
+import torch
+import torchvision
+import torch.nn.functional as F
+import torchvision.transforms as transforms
+import torch.optim as optim
+import torch.backends.cudnn as cudnn
 
 class Logger():
     def __init__(self, savepath):
@@ -26,12 +32,13 @@ def save_checkpoint(state, is_best, path, filename='checkpoint.pth.tar'):
         
 
 class TrainAndTest():
-    def __init__(self, net, trainloader, testloader, criterion, optimizer):
+    def __init__(self, net, trainloader, testloader, criterion, optimizer, netname):
         self.net = net
         self.trainloader = trainloader
         self.testloader = testloader
         self.criterion = criterion
         self.optimizer = optimizer 
+        self.netname = netname
         
     def train(self, epoch):
         self.net.train()
@@ -39,7 +46,7 @@ class TrainAndTest():
         if (epoch+1) % 30 == 0:
             self.learningRate /= 2
             if self.logger:
-                logger.info("=> Learning rate is updated!")
+                self.logger.info("=> Learning rate is updated!")
             else:
                 print("=> Learning rate is updated!")
             for param_group in self.optimizer.param_groups:
@@ -64,7 +71,7 @@ class TrainAndTest():
             print("=> Epoch: [{:4d}/{:4d}] | Training Loss:[{:2.4e}] | Training Accuracy: [{:5.4f}]".format(
                 epoch + 1, self.total_epochs, loss_epoch, train_accuracy_epoch))
         else:
-            self.logger("=> Epoch: [{:4d}/{:4d}] | Training Loss:[{:2.4e}] | Training Accuracy: [{:5.4f}]".format(
+            self.logger.info("=> Epoch: [{:4d}/{:4d}] | Training Loss:[{:2.4e}] | Training Accuracy: [{:5.4f}]".format(
                 epoch + 1, self.total_epochs, loss_epoch, train_accuracy_epoch))
         return loss_epoch, train_accuracy_epoch
     
@@ -79,7 +86,7 @@ class TrainAndTest():
             output = self.net(images)
             loss = self.criterion(output, labels)
             predicted = output.data.max(1)[1]
-            accuracy = (float(predicted.eq(labels.data).sum()) / float(100))  # test batch size 100
+            accuracy = (float(predicted.eq(labels.data).sum()) / float(self.batch_size))  
             test_accuracy += accuracy
         test_accuracy_epoch = test_accuracy / (i+1)
         test_loss_epoch = loss.item()
@@ -106,9 +113,9 @@ class TrainAndTest():
         testing_loss_seq = []
         testing_best_accuracy = -1
         if self.logger:
-            self.logger.info(f"Number of GPU availabel: {torch.cuda.device_count()}")
+            self.logger.info(f"Number of GPU available: {torch.cuda.device_count()}")
         else:
-            print(f"Number of GPU availabel: {torch.cuda.device_count()}")
+            print(f"Number of GPU available: {torch.cuda.device_count()}")
         # try GPU
         if self.use_cuda:
             self.net.cuda()
@@ -148,7 +155,7 @@ class TrainAndTest():
             else:
                 if not self.logger:
                     print("=> no checkpoint found at '{}'".format(self.checkpointPath))
-                    print("=> Training the resnet from scratch...")
+                    print("=> Training the network from scratch...")
                 else:
                     self.logger.info("=> no checkpoint found at '{}'".format(self.checkpointPath))
                     self.logger.info("=> Training the resnet from scratch...")
@@ -183,7 +190,7 @@ class TrainAndTest():
                 "testing_accuracy_seq": testing_accuracy_seq,
                 "testing_best_accuracy": testing_best_accuracy
             }
-            save_checkpoint(state, is_best, path=modelDir, filename=f'{self.net.name}-checkpoint.pth.tar')
+            save_checkpoint(state, is_best, path=modelDir, filename=f'{self.netname}-checkpoint.pth.tar')
             if is_best:
                 if self.logger:
                     self.logger.info("=> Best parameters are updated")

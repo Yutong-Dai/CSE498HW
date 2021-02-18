@@ -1,0 +1,5 @@
+2021-02-18 03:27:56,757 - [INFO] - Number of GPU available: 1
+2021-02-18 03:27:56,758 - [INFO] - => Training the resnet from scratch...
+2021-02-18 03:28:02,258 - [INFO] - => Epoch: [   1/  30] | Training Loss:[7.5752e-01] | Training Accuracy: [0.6440]
+2021-02-18 03:28:03,249 - [INFO] - => Epoch: [   1/  30] | Testing  Loss:[5.1623e-01] | Testing  Accuracy: [0.8202]
+2021-02-18 03:28:03,256 - [INFO] - => Best parameters are updated

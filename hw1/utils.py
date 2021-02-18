@@ -3,6 +3,12 @@ import shutil
 import logging
 import os
 import numpy as np
+import torch
+import torchvision
+import torch.nn.functional as F
+import torchvision.transforms as transforms
+import torch.optim as optim
+import torch.backends.cudnn as cudnn
 
 class Logger():
     def __init__(self, savepath):
@@ -23,15 +29,61 @@ def save_checkpoint(state, is_best, path, filename='checkpoint.pth.tar'):
     torch.save(state, f'{path}/{filename}')
     if is_best:
         shutil.copyfile(f'{path}/{filename}', f'{path}/best-{filename}')
+
+def _test_cpu(net, testloader, criterion, vectorize):
+    net.eval()
+    test_accuracy = 0.0
+    batch_size = testloader.batch_size
+    for i, (images, labels) in enumerate(testloader):
+        if vectorize:
+            images = images.view([images.shape[0], -1])
+        output = net(images)
+        loss = criterion(output, labels)
+        predicted = output.data.max(1)[1]
+        accuracy = (float(predicted.eq(labels.data).sum()) / float(batch_size))  
+        test_accuracy += accuracy
+    test_accuracy_epoch = test_accuracy / (i+1)
+    test_loss_epoch = loss.item()
+    return test_loss_epoch, test_accuracy_epoch
+
+class twoLayerNN(torch.nn.Module):
+    def __init__(self, D_in, H, D_out):
+        """
+        This class is used to for MNIST and CIFAR-10 image classification
+        In the constructor we instantiate two nn.Linear modules and assign them as
+        member variables.
+        # reference https://pytorch.org/tutorials/beginner/examples_nn/two_layer_net_module.html
+        """
+        super(twoLayerNN, self).__init__()
+        # input layer is a fully connected layer
+        # for single input x of shape (D_in, 1)
+        # 'Linear' method creates a weight matrix W of shape (H, D_in) and 
+        # a bias vector b of shape (H, 1) and then outputs
+        # z = Wx + b of shape (H,1)
+        self.fcInput = torch.nn.Linear(D_in, H, bias=True)
+        self.reluHidden = torch.nn.ReLU()
+        self.fcOutput = torch.nn.Linear(H, D_out, bias=True)
+
+    def forward(self, x):
+        """
+        In the forward function we accept a Tensor of input data and we must return
+        a Tensor of output data. We can use Modules defined in the constructor as
+        well as arbitrary operators on Tensors.
+        """
+        input = self.fcInput(x)
+        hidden = self.reluHidden(input)
+        output = self.fcOutput(hidden)
+        return output
         
 
 class TrainAndTest():
-    def __init__(self, net, trainloader, testloader, criterion, optimizer):
+    def __init__(self, net, trainloader, testloader, criterion, optimizer, netname):
         self.net = net
         self.trainloader = trainloader
         self.testloader = testloader
         self.criterion = criterion
         self.optimizer = optimizer 
+        self.netname = netname
         
     def train(self, epoch):
         self.net.train()
@@ -39,7 +91,7 @@ class TrainAndTest():
         if (epoch+1) % 30 == 0:
             self.learningRate /= 2
             if self.logger:
-                logger.info("=> Learning rate is updated!")
+                self.logger.info("=> Learning rate is updated!")
             else:
                 print("=> Learning rate is updated!")
             for param_group in self.optimizer.param_groups:
@@ -64,7 +116,7 @@ class TrainAndTest():
             print("=> Epoch: [{:4d}/{:4d}] | Training Loss:[{:2.4e}] | Training Accuracy: [{:5.4f}]".format(
                 epoch + 1, self.total_epochs, loss_epoch, train_accuracy_epoch))
         else:
-            self.logger("=> Epoch: [{:4d}/{:4d}] | Training Loss:[{:2.4e}] | Training Accuracy: [{:5.4f}]".format(
+            self.logger.info("=> Epoch: [{:4d}/{:4d}] | Training Loss:[{:2.4e}] | Training Accuracy: [{:5.4f}]".format(
                 epoch + 1, self.total_epochs, loss_epoch, train_accuracy_epoch))
         return loss_epoch, train_accuracy_epoch
     
@@ -79,7 +131,7 @@ class TrainAndTest():
             output = self.net(images)
             loss = self.criterion(output, labels)
             predicted = output.data.max(1)[1]
-            accuracy = (float(predicted.eq(labels.data).sum()) / float(100))  # test batch size 100
+            accuracy = (float(predicted.eq(labels.data).sum()) / float(self.batch_size))  
             test_accuracy += accuracy
         test_accuracy_epoch = test_accuracy / (i+1)
         test_loss_epoch = loss.item()
@@ -106,9 +158,9 @@ class TrainAndTest():
         testing_loss_seq = []
         testing_best_accuracy = -1
         if self.logger:
-            self.logger.info(f"Number of GPU availabel: {torch.cuda.device_count()}")
+            self.logger.info(f"Number of GPU available: {torch.cuda.device_count()}")
         else:
-            print(f"Number of GPU availabel: {torch.cuda.device_count()}")
+            print(f"Number of GPU available: {torch.cuda.device_count()}")
         # try GPU
         if self.use_cuda:
             self.net.cuda()
@@ -148,7 +200,7 @@ class TrainAndTest():
             else:
                 if not self.logger:
                     print("=> no checkpoint found at '{}'".format(self.checkpointPath))
-                    print("=> Training the resnet from scratch...")
+                    print("=> Training the network from scratch...")
                 else:
                     self.logger.info("=> no checkpoint found at '{}'".format(self.checkpointPath))
                     self.logger.info("=> Training the resnet from scratch...")
@@ -183,7 +235,7 @@ class TrainAndTest():
                 "testing_accuracy_seq": testing_accuracy_seq,
                 "testing_best_accuracy": testing_best_accuracy
             }
-            save_checkpoint(state, is_best, path=modelDir, filename=f'{self.net.name}-checkpoint.pth.tar')
+            save_checkpoint(state, is_best, path=modelDir, filename=f'{self.netname}-checkpoint.pth.tar')
             if is_best:
                 if self.logger:
                     self.logger.info("=> Best parameters are updated")

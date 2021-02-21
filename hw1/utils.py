@@ -10,7 +10,11 @@ import torchvision.transforms as transforms
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 
+
 class Logger():
+    """
+    create a logger objetc.
+    """
     def __init__(self, savepath):
         log_level = logging.INFO
         self.logger = logging.getLogger()
@@ -20,31 +24,39 @@ class Logger():
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
         self.logger.setLevel(log_level)
+
     def info(self, text):
         self.logger.info(text)
 
-        
-        
+
 def save_checkpoint(state, is_best, path, filename='checkpoint.pth.tar'):
+    """
+    save model and optimizer's statuses while training.
+    It will also save the best model(highest testing accuracy) be seen so far.
+    """
     torch.save(state, f'{path}/{filename}')
     if is_best:
         shutil.copyfile(f'{path}/{filename}', f'{path}/best-{filename}')
+
 
 def _test_cpu(net, testloader, criterion, vectorize):
     net.eval()
     test_accuracy = 0.0
     batch_size = testloader.batch_size
+    Ypred = []
     for i, (images, labels) in enumerate(testloader):
         if vectorize:
             images = images.view([images.shape[0], -1])
         output = net(images)
         loss = criterion(output, labels)
         predicted = output.data.max(1)[1]
-        accuracy = (float(predicted.eq(labels.data).sum()) / float(batch_size))  
+        Ypred += predicted
+        accuracy = (float(predicted.eq(labels.data).sum()) / float(batch_size))
         test_accuracy += accuracy
-    test_accuracy_epoch = test_accuracy / (i+1)
+    test_accuracy_epoch = test_accuracy / (i + 1)
     test_loss_epoch = loss.item()
-    return test_loss_epoch, test_accuracy_epoch
+    return test_loss_epoch, test_accuracy_epoch, Ypred
+
 
 class twoLayerNN(torch.nn.Module):
     def __init__(self, D_in, H, D_out):
@@ -57,7 +69,7 @@ class twoLayerNN(torch.nn.Module):
         super(twoLayerNN, self).__init__()
         # input layer is a fully connected layer
         # for single input x of shape (D_in, 1)
-        # 'Linear' method creates a weight matrix W of shape (H, D_in) and 
+        # 'Linear' method creates a weight matrix W of shape (H, D_in) and
         # a bias vector b of shape (H, 1) and then outputs
         # z = Wx + b of shape (H,1)
         self.fcInput = torch.nn.Linear(D_in, H, bias=True)
@@ -74,21 +86,72 @@ class twoLayerNN(torch.nn.Module):
         hidden = self.reluHidden(input)
         output = self.fcOutput(hidden)
         return output
-        
+
+
+class CNNMNIST(torch.nn.Module):
+    """
+    Train a CNN with: conv - maxpool - conv - maxpool - fc + relu - fc
+    Reference: https://github.com/pytorch/examples/blob/master/mnist/main.py
+    """
+    def __init__(self):
+        super(CNNMNIST, self).__init__()
+        # int((h + 2*padding - dilation * (kernel_size-1) - 1) / stride + 1)
+        self.conv1 = torch.nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3,
+                                     stride=1, padding=0, dilation=1, bias=True)
+        self.pool = torch.nn.MaxPool2d(kernel_size=3)
+        self.conv2 = torch.nn.Conv2d(32, 64, 3)
+        self.fc1 = torch.nn.Linear(256, 128, bias=True)
+        self.fc2 = torch.nn.Linear(128, 10, bias=True)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(x.shape[0], -1)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+class CNNCIFAR10(torch.nn.Module):
+    """
+    Train a CNN with: conv - conv - maxpool - conv - maxpool - fc + relu - fc
+    Reference: https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
+    """
+    def __init__(self):
+        super(CNNCIFAR10, self).__init__()
+        # int((h + 2*padding - dilation * (kernel_size-1) - 1) / stride + 1)
+        self.conv1 = torch.nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3,
+                                     stride=1, padding=0, dilation=1, bias=True)
+        self.conv2 = torch.nn.Conv2d(32, 64, 3)
+        self.conv3 = torch.nn.Conv2d(64, 128, 3)
+        self.pool = torch.nn.MaxPool2d(kernel_size=3)
+        self.fc1 = torch.nn.Linear(512, 128, bias=True)
+        self.fc2 = torch.nn.Linear(128, 10, bias=True)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(F.relu(self.conv3(x)))
+        x = x.view(x.shape[0], -1)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
 
 class TrainAndTest():
+    """
+    create a trainAndTest class. 
+    """
     def __init__(self, net, trainloader, testloader, criterion, optimizer, netname):
         self.net = net
         self.trainloader = trainloader
         self.testloader = testloader
         self.criterion = criterion
-        self.optimizer = optimizer 
+        self.optimizer = optimizer
         self.netname = netname
-        
+
     def train(self, epoch):
         self.net.train()
         # decaying learning rate
-        if (epoch+1) % 30 == 0:
+        if (epoch + 1) % 30 == 0:
             self.learningRate /= 2
             if self.logger:
                 self.logger.info("=> Learning rate is updated!")
@@ -110,7 +173,7 @@ class TrainAndTest():
             predicted = output.data.max(1)[1]
             accuracy = (float(predicted.eq(labels.data).sum()) / float(self.batch_size))
             train_accuracy += accuracy
-        train_accuracy_epoch = train_accuracy / (i+1)
+        train_accuracy_epoch = train_accuracy / (i + 1)
         loss_epoch = loss.item()
         if not self.logger:
             print("=> Epoch: [{:4d}/{:4d}] | Training Loss:[{:2.4e}] | Training Accuracy: [{:5.4f}]".format(
@@ -119,7 +182,7 @@ class TrainAndTest():
             self.logger.info("=> Epoch: [{:4d}/{:4d}] | Training Loss:[{:2.4e}] | Training Accuracy: [{:5.4f}]".format(
                 epoch + 1, self.total_epochs, loss_epoch, train_accuracy_epoch))
         return loss_epoch, train_accuracy_epoch
-    
+
     def test(self, epoch):
         self.net.eval()
         test_accuracy = 0.0
@@ -131,9 +194,9 @@ class TrainAndTest():
             output = self.net(images)
             loss = self.criterion(output, labels)
             predicted = output.data.max(1)[1]
-            accuracy = (float(predicted.eq(labels.data).sum()) / float(self.batch_size))  
+            accuracy = (float(predicted.eq(labels.data).sum()) / float(self.batch_size))
             test_accuracy += accuracy
-        test_accuracy_epoch = test_accuracy / (i+1)
+        test_accuracy_epoch = test_accuracy / (i + 1)
         test_loss_epoch = loss.item()
         if not self.logger:
             print("=> Epoch: [{:4d}/{:4d}] | Testing  Loss:[{:2.4e}] | Testing  Accuracy: [{:5.4f}]".format(
@@ -164,9 +227,10 @@ class TrainAndTest():
         # try GPU
         if self.use_cuda:
             self.net.cuda()
-            self.net = torch.nn.DataParallel(self.net, device_ids=range(torch.cuda.device_count()))
+            if not isinstance(self.net, torch.nn.DataParallel):
+                self.net = torch.nn.DataParallel(self.net, device_ids=range(torch.cuda.device_count()))
             cudnn.benchmark = True
-            
+
         # start from checkpoint
         if self.checkpointPath:
             if not self.logger:
@@ -189,14 +253,14 @@ class TrainAndTest():
                           .format(self.checkpointPath, start_epoch))
                 else:
                     self.logger.info("=> loaded checkpoint '{}' (epoch {} are trained)"
-                            .format(self.checkpointPath, start_epoch))
+                                     .format(self.checkpointPath, start_epoch))
                 # sanitycheck
                 if sanitycheck:
-                    test_loss, test_accuracy = self.test(start_epoch-1)
+                    test_loss, test_accuracy = self.test(start_epoch - 1)
                     print(f'For the loaded net: testing loss: {test_loss:5.4f} | testing accuracy:[{test_accuracy:5.4f}]')
                     print(f'Recorded          : testing loss: {testing_loss_seq[-1]:5.4f} | testing accuracy:[{testing_accuracy_seq[-1]:5.4f}]')
                     assert np.abs(test_loss - testing_loss_seq[-1]) <= 1e-8, 'loading the wrong checkpoint!'
-                    
+
             else:
                 if not self.logger:
                     print("=> no checkpoint found at '{}'".format(self.checkpointPath))
@@ -213,7 +277,6 @@ class TrainAndTest():
         # get up-to-date learning rate; resume training
         self.learningRate = self.optimizer.param_groups[0]['lr']
 
-
         for epoch in range(start_epoch, self.total_epochs):
             train_loss, train_accuracy = self.train(epoch)
             test_loss, test_accuracy = self.test(epoch)
@@ -227,7 +290,7 @@ class TrainAndTest():
 
             state = {
                 "epoch": epoch,
-                "state_dict": self.net.state_dict(), 
+                "state_dict": self.net.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "training_loss_seq": training_loss_seq,
                 "training_accuracy_seq": training_accuracy_seq,
@@ -248,5 +311,5 @@ class TrainAndTest():
          [{}]".format(self.total_epochs, testing_accuracy_seq[-1], testing_best_accuracy))
         else:
             print("=> Trained on [{:4d}] epochs, with test accuracy [{:5.4f}].\n"
-             "=> During the training stages, historical best test accuracy is [{:5.4f}]".format(self.total_epochs, 
-                                                                                                testing_accuracy_seq[-1], testing_best_accuracy))
+                  "=> During the training stages, historical best test accuracy is [{:5.4f}]".format(self.total_epochs,
+                                                                                                     testing_accuracy_seq[-1], testing_best_accuracy))

@@ -11,10 +11,47 @@ import torch.optim as optim
 import torch.backends.cudnn as cudnn
 
 
+def getMaxIdx(torch3dtensor):
+    """
+        get the idx of the max number of a 3-d tensor
+    """
+    idx = torch.argmax(torch3dtensor, keepdim=True)
+    idx = torch.argmax(torch3dtensor, keepdim=True)
+    row, col = torch3dtensor.shape[1], torch3dtensor.shape[2]
+    cidx = idx // (row * col)
+    remainder = idx - cidx * (row * col)
+    rowidx = remainder // col
+    colidx = remainder - rowidx * col
+    return cidx, rowidx, colidx
+
+
+def topbottomK(torch3dtensor, k):
+    """
+        get the idx of the max number of a 3-d tensor
+    """
+    row, col = torch3dtensor.shape[1], torch3dtensor.shape[2]
+    torch3dtensor = torch3dtensor.view(-1,)
+    sortedIdx = np.argsort(torch3dtensor)
+    idxset = sortedIdx[:k].tolist() + sortedIdx[-k:].tolist()
+    cidxs = []
+    rowidxs = []
+    colidxs = []
+    for idx in idxset:
+        cidx = idx // (row * col)
+        remainder = idx - cidx * (row * col)
+        rowidx = remainder // col
+        colidx = remainder - rowidx * col
+        cidxs.append(cidx)
+        rowidxs.append(rowidx)
+        colidxs.append(colidx)
+    return cidxs, rowidxs, colidxs
+
+
 class Logger():
     """
     create a logger objetc.
     """
+
     def __init__(self, savepath):
         log_level = logging.INFO
         self.logger = logging.getLogger()
@@ -93,6 +130,7 @@ class CNNMNIST(torch.nn.Module):
     Train a CNN with: conv - maxpool - conv - maxpool - fc + relu - fc
     Reference: https://github.com/pytorch/examples/blob/master/mnist/main.py
     """
+
     def __init__(self):
         super(CNNMNIST, self).__init__()
         # int((h + 2*padding - dilation * (kernel_size-1) - 1) / stride + 1)
@@ -111,11 +149,13 @@ class CNNMNIST(torch.nn.Module):
         x = self.fc2(x)
         return x
 
+
 class CNNCIFAR10(torch.nn.Module):
     """
     Train a CNN with: conv - conv - maxpool - conv - maxpool - fc + relu - fc
     Reference: https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
     """
+
     def __init__(self):
         super(CNNCIFAR10, self).__init__()
         # int((h + 2*padding - dilation * (kernel_size-1) - 1) / stride + 1)
@@ -136,10 +176,12 @@ class CNNCIFAR10(torch.nn.Module):
         x = self.fc2(x)
         return x
 
+
 class TrainAndTest():
     """
     create a trainAndTest class. 
     """
+
     def __init__(self, net, trainloader, testloader, criterion, optimizer, netname):
         self.net = net
         self.trainloader = trainloader
@@ -313,3 +355,12 @@ class TrainAndTest():
             print("=> Trained on [{:4d}] epochs, with test accuracy [{:5.4f}].\n"
                   "=> During the training stages, historical best test accuracy is [{:5.4f}]".format(self.total_epochs,
                                                                                                      testing_accuracy_seq[-1], testing_best_accuracy))
+
+
+if __name__ == "__main__":
+    channel, row, col = 2, 3, 4
+    for i in range(100):
+        a = torch.randn(channel, row, col)
+        cidx, rowidx, colidx = getMaxIdx(a)
+        if a[cidx, rowidx, colidx] != torch.max(a):
+            print(i)

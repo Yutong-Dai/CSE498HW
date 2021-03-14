@@ -42,24 +42,28 @@ def save_checkpoint(state, is_best, path, filename='checkpoint.pth.tar'):
         shutil.copyfile(f'{path}/{filename}', f'{path}/best-{filename}')
 
 
-def _test_cpu(net, testloader, criterion, vectorize):
+
+def _test(net, testloader, criterion, use_cuda, vectorize):
     net.eval()
     test_accuracy = 0.0
+    total = 0
     batch_size = testloader.batch_size
     Ypred = []
     for i, (images, labels) in enumerate(testloader):
         if vectorize:
             images = images.view([images.shape[0], -1])
+        if use_cuda:
+            images, labels = images.cuda(), labels.cuda()
         output = net(images)
         loss = criterion(output, labels)
         predicted = output.data.max(1)[1]
         Ypred += predicted
-        accuracy = (float(predicted.eq(labels.data).sum()) / float(batch_size))
+        accuracy = predicted.eq(labels.data).sum().item()
         test_accuracy += accuracy
-    test_accuracy_epoch = test_accuracy / (i + 1)
+        total += labels.size(0)
+    test_accuracy_epoch = test_accuracy / total
     test_loss_epoch = loss.item()
     return test_loss_epoch, test_accuracy_epoch, Ypred
-
 
 
 class TrainAndTest():

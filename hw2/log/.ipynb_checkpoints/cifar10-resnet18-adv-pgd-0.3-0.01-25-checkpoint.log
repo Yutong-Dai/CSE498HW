@@ -1,0 +1,7 @@
+2021-03-14 15:38:41,164 - [INFO] - Number of GPU available: 2
+2021-03-14 15:38:43,044 - [INFO] - Resume training from the checkpoint...
+2021-03-14 15:38:43,044 - [INFO] - => no checkpoint found at './model/cifar10-resnet18-adv-pgd-0.3-0.01-25-checkpoint.pth.tar'
+2021-03-14 15:38:43,045 - [INFO] - => Training the resnet from scratch...
+2021-03-14 15:39:15,946 - [INFO] - => Epoch: [   1/ 200] | train-    Loss:[2.0690e-03] | train-    Accuracy: [0.4999]
+2021-03-14 15:52:03,966 - [INFO] - => Epoch: [   1/ 200] | train-adv Loss:[3.4759e-03] | train-adv Accuracy: [0.1838]
+2021-03-14 15:52:06,549 - [INFO] - => Epoch: [   1/ 200] | test-    Loss:[2.9462e-03] | test-    Accuracy: [0.3737]

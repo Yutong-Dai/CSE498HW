@@ -1,92 +1,12 @@
 import torch
-import shutil
-import logging
 import os
 import numpy as np
-import torch
-import torchvision
-import torch.nn.functional as F
-import torchvision.transforms as transforms
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
+from utils import save_checkpoint
+from attacks import fgsm_delta, pgd_delta
 
-
-
-
-class Logger():
-    """
-    create a logger objetc.
-    """
-
-    def __init__(self, savepath):
-        log_level = logging.INFO
-        self.logger = logging.getLogger()
-        handler = logging.FileHandler(f"{savepath}.log")
-        handler.setLevel(log_level)
-        formatter = logging.Formatter('%(asctime)s - [%(levelname)s] - %(message)s')
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
-        self.logger.setLevel(log_level)
-
-    def info(self, text):
-        self.logger.info(text)
-
-
-def save_checkpoint(state, is_best, path, filename='checkpoint.pth.tar'):
-    """
-    save model and optimizer's statuses while training.
-    It will also save the best model(highest testing accuracy) be seen so far.
-    """
-    torch.save(state, f'{path}/{filename}')
-    if is_best:
-        shutil.copyfile(f'{path}/{filename}', f'{path}/best-{filename}')
-
-
-
-def _test(net, testloader, criterion, use_cuda, vectorize):
-    net.eval()
-    test_accuracy = 0.0
-    total = 0
-    batch_size = testloader.batch_size
-    Ypred = []
-    for i, (images, labels) in enumerate(testloader):
-        if vectorize:
-            images = images.view([images.shape[0], -1])
-        if use_cuda:
-            images, labels = images.cuda(), labels.cuda()
-        output = net(images)
-        loss = criterion(output, labels)
-        predicted = output.data.max(1)[1]
-        Ypred += predicted
-        accuracy = predicted.eq(labels.data).sum().item()
-        test_accuracy += accuracy
-        total += labels.size(0)
-    test_accuracy_epoch = test_accuracy / total
-    test_loss_epoch = loss.item()
-    return test_loss_epoch, test_accuracy_epoch, Ypred
-
-def _testAdv(net, testloader, criterion, use_cuda, attacker=None):
-    loss, correct = 0.0, 0
-    Ypred = []
-    for i, (images, labels) in enumerate(testloader):
-        if use_cuda:
-            images, labels = images.cuda(), labels.cuda()
-        if attacker is not None:
-            delta = attacker.attack(net,  criterion, images, labels)
-            output = net.forward(images+delta)
-        else:
-            output = net.forward(images)
-        loss = criterion(output, labels)
-        # get accuracy
-        predicted = output.data.max(1)[1]
-        Ypred += predicted
-        correct += predicted.eq(labels.data).sum().item()
-        loss += loss.item() * images.shape[0]
-    loss_epoch = loss / len(testloader.dataset)
-    accuracy_epoch = correct / len(testloader.dataset)
-    return loss_epoch, accuracy_epoch, Ypred
-
-class TrainAndTest():
+class AdvTrainAndTest():
     """
     create a trainAndTest class. 
     """
@@ -102,86 +22,61 @@ class TrainAndTest():
             self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
         else:
             self.scheduler = scheduler
+        self.use_cuda = torch.cuda.is_available()
 
-    def train(self, epoch):
-        self.net.train()
-        # # decaying learning rate
-        # if (epoch + 1) % 30 == 0:
-        #     self.learningRate /= 2
-        #     if self.logger:
-        #         self.logger.info("=> Learning rate is updated!")
-        #     else:
-        #         print("=> Learning rate is updated!")
-        #     for param_group in self.optimizer.param_groups:
-        #         param_group['lr'] = self.learningRate
-        train_accuracy = 0.0
-        total = 0
-        for i, (images, labels) in enumerate(self.trainloader):
-            if self.vectorize:
-                images = images.view([images.shape[0], -1])
+    def one_epoch(self, epoch, type='train', attacker=None, optimizer=None):
+        if type == 'train':
+            self.net.train()
+            loader = self.trainloader
+        else:
+            self.net.eval()
+            loader = self.testloader
+        loss, correct = 0.0, 0
+        for i, (images, labels) in enumerate(loader):
             if self.use_cuda:
                 images, labels = images.cuda(), labels.cuda()
-            self.optimizer.zero_grad()
-            output = self.net.forward(images)
+            if attacker is not None:
+                delta = attacker.attack(self.net,  self.criterion, images, labels)
+                output = self.net.forward(images+delta)
+            else:
+                output = self.net.forward(images)
             loss = self.criterion(output, labels)
-            loss.backward()
-            self.optimizer.step()
+            if optimizer is not None:
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+            # get accuracy
             predicted = output.data.max(1)[1]
-            # accuracy = (float(predicted.eq(labels.data).sum()) / float(self.batch_size))
-            accuracy = predicted.eq(labels.data).sum().item()
-            train_accuracy += accuracy
-            total += labels.size(0)
-        # train_accuracy_epoch = train_accuracy / (i + 1)
-        train_accuracy_epoch = train_accuracy / total
-        loss_epoch = loss.item()
-        if not self.logger:
-            print("=> Epoch: [{:4d}/{:4d}] | Training Loss:[{:2.4e}] | Training Accuracy: [{:5.4f}]".format(
-                epoch + 1, self.total_epochs, loss_epoch, train_accuracy_epoch))
+            correct += predicted.eq(labels.data).sum().item()
+            loss += loss.item() * images.shape[0]
+        loss_epoch = loss / len(loader.dataset)
+        accuracy_epoch = correct / len(loader.dataset)
+        if attacker is not None:
+            ext='adv'
         else:
-            self.logger.info("=> Epoch: [{:4d}/{:4d}] | Training Loss:[{:2.4e}] | Training Accuracy: [{:5.4f}]".format(
-                epoch + 1, self.total_epochs, loss_epoch, train_accuracy_epoch))
-        return loss_epoch, train_accuracy_epoch
-
-    def test(self, epoch):
-        self.net.eval()
-        test_accuracy = 0.0
-        total = 0.0
-        for i, (images, labels) in enumerate(self.testloader):
-            if self.vectorize:
-                images = images.view([images.shape[0], -1])
-            if self.use_cuda:
-                images, labels = images.cuda(), labels.cuda()
-            output = self.net(images)
-            loss = self.criterion(output, labels)
-            predicted = output.data.max(1)[1]
-            # accuracy = (float(predicted.eq(labels.data).sum()) / float(self.batch_size))
-            accuracy = predicted.eq(labels.data).sum().item()
-            test_accuracy += accuracy
-            total += labels.size(0)
-        # test_accuracy_epoch = test_accuracy / (i + 1)
-        test_accuracy_epoch = test_accuracy / total
-        test_loss_epoch = loss.item()
+            ext='   '
         if not self.logger:
-            print("=> Epoch: [{:4d}/{:4d}] | Testing  Loss:[{:2.4e}] | Testing  Accuracy: [{:5.4f}]".format(
-                epoch + 1, self.total_epochs, test_loss_epoch, test_accuracy_epoch))
+            print(f"=> Epoch: [{epoch + 1:4d}/{self.total_epochs:4d}] | {type}-{ext} Loss:[{loss_epoch:2.4e}] | {type}-{ext} Accuracy: [{accuracy_epoch:5.4f}]")
         else:
-            self.logger.info("=> Epoch: [{:4d}/{:4d}] | Testing  Loss:[{:2.4e}] | Testing  Accuracy: [{:5.4f}]".format(
-                epoch + 1, self.total_epochs, test_loss_epoch, test_accuracy_epoch))
-        return test_loss_epoch, test_accuracy_epoch
+            self.logger.info(f"=> Epoch: [{epoch + 1:4d}/{self.total_epochs:4d}] | {type}-{ext} Loss:[{loss_epoch:2.4e}] | {type}-{ext} Accuracy: [{accuracy_epoch:5.4f}]")
+        return loss_epoch, accuracy_epoch
+        
 
-    def build(self, total_epochs, checkpointPath=None, logger=None, modelDir="./", vectorize=False, start_epoch=0, sanitycheck=True):
+    def build(self, total_epochs, attacker=None, checkpointPath=None, logger=None, modelDir="./", start_epoch=0, sanitycheck=True):
         self.total_epochs = total_epochs
         self.checkpointPath = checkpointPath
         self.logger = logger
         self.modelDir = modelDir
         self.batch_size = self.trainloader.batch_size
-        self.vectorize = vectorize
-        self.use_cuda = torch.cuda.is_available()
         self.sanitycheck = sanitycheck
         training_accuracy_seq = []
         training_loss_seq = []
         testing_accuracy_seq = []
         testing_loss_seq = []
+        adv_training_accuracy_seq = []
+        adv_training_loss_seq = []
+        adv_testing_accuracy_seq = []
+        adv_testing_loss_seq = []
         testing_best_accuracy = -1
         if self.logger:
             self.logger.info(f"Number of GPU available: {torch.cuda.device_count()}")
@@ -211,6 +106,10 @@ class TrainAndTest():
                 testing_accuracy_seq = checkpoint['testing_accuracy_seq']
                 testing_loss_seq = checkpoint['testing_loss_seq']
                 testing_best_accuracy = checkpoint['testing_best_accuracy']
+                adv_training_accuracy_seq = checkpoint['adv_training_accuracy_seq']
+                adv_training_loss_seq = checkpoint['adv_training_loss_seq']
+                adv_testing_accuracy_seq = checkpoint['adv_testing_accuracy_seq']
+                adv_testing_loss_seq = checkpoint['adv_testing_loss_seq']
                 if not self.logger:
                     print("=> load checkpoint from '{}' (epochs {} are trained)"
                           .format(self.checkpointPath, start_epoch))
@@ -241,14 +140,29 @@ class TrainAndTest():
         self.learningRate = self.optimizer.param_groups[0]['lr']
 
         for epoch in range(start_epoch, self.total_epochs):
-            train_loss, train_accuracy = self.train(epoch)
-            test_loss, test_accuracy = self.test(epoch)
-            self.scheduler.step()
+            # normal traning
+            if attacker == None:
+                train_loss, train_accuracy = self.one_epoch(epoch, type='train', attack=None, optimizer=self.optimizer)
+                test_loss, test_accuracy = self.one_epoch(epoch, type='test', attack=None, optimizer=None)
+            # adversarial training
+            else:
+                # train on normal data
+                train_loss, train_accuracy = self.one_epoch(epoch, type='train', attacker=None, optimizer=self.optimizer)
+                # train on adversarial data
+                adv_train_loss, adv_train_accuracy = self.one_epoch(epoch, type='train', attacker=attacker, optimizer=self.optimizer)
+                adv_training_loss_seq.append(adv_train_loss)
+                adv_training_accuracy_seq.append(adv_train_accuracy)
+                # test on normal data
+                test_loss, test_accuracy = self.one_epoch(epoch, type='test', attack=None, optimizer=None)
+                # test on adversarial data
+                adv_test_loss, adv_test_accuracy = self.one_epoch(epoch, type='test', attack=attacker, optimizer=None)
+                adv_testing_loss_seq.append(adv_test_loss)
+                adv_testing_accuracy_seq.append(adv_test_accuracy)
             training_loss_seq.append(train_loss)
             training_accuracy_seq.append(train_accuracy)
             testing_loss_seq.append(test_loss)
             testing_accuracy_seq.append(test_accuracy)
-
+            self.scheduler.step()
             is_best = testing_accuracy_seq[-1] > testing_best_accuracy
             testing_best_accuracy = max(testing_best_accuracy, testing_accuracy_seq[-1])
 
@@ -260,7 +174,11 @@ class TrainAndTest():
                 "training_accuracy_seq": training_accuracy_seq,
                 "testing_loss_seq": testing_loss_seq,
                 "testing_accuracy_seq": testing_accuracy_seq,
-                "testing_best_accuracy": testing_best_accuracy
+                "testing_best_accuracy": testing_best_accuracy,
+                "adv_training_accuracy_seq": adv_training_accuracy_seq,
+                "adv_training_loss_seq":adv_training_loss_seq,
+                "adv_testing_accuracy_seq": adv_testing_accuracy_seq,
+                "adv_testing_loss_seq": adv_testing_loss_seq
             }
             save_checkpoint(state, is_best, path=modelDir, filename=f'{self.netname}-checkpoint.pth.tar')
             if is_best:

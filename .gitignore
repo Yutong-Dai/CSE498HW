@@ -1,3 +1,4 @@
 db/*
 hw1/db/*
-hw2/model
+hw2/model/cifar10-resnet18-adv-pgd-0.3-0.01-25-0.2-untargeted.pth
+hw2/model/cifar10-resnet-0.2-untargeted.pth

@@ -1,18 +1,29 @@
 import torch
-from matplotlib import  pyplot as plt
+from matplotlib import pyplot as plt
 from blackbox.simba import SimBA
 import blackbox.utils as simba_utils
 import math
 import numpy as np
 np.random.seed(0)
 
+
 class ATTACKER:
     def __init__(self, type, epsilon, **kwargs):
+        """ 
+        type: str; FGSM / PGD
+                Reference: https://adversarial-ml-tutorial.org/adversarial_examples/
+        epsilon: max perturbation; l_infty norm
+        """
         self.type = type
         self.epsilon = epsilon
         self.__dict__.update(kwargs)
-        
+
     def attack(self, net, criterion, images, labels):
+        """
+            net: trained neural net work
+            criterion: loss function
+            images, labels: tensors being fed on to net work
+        """
         # remove all existing gradients
         net.zero_grad()
         delta = torch.zeros_like(images, requires_grad=True)
@@ -20,7 +31,7 @@ class ATTACKER:
             for _ in range(self.num_iter):
                 loss = criterion(net(images + delta), labels)
                 loss.backward()
-                # normalize the gradient
+                # normalize the gradient to get better scaling on stepsize
                 delta.data = (delta + self.alpha * delta.grad.detach().sign()).clamp(-self.epsilon, self.epsilon)
                 delta.grad.zero_()
             delta = delta.detach()
@@ -31,6 +42,7 @@ class ATTACKER:
         else:
             raise ValueError(f"Invalid attack type:{self.type}")
         return delta
+
 
 def fgsm_grad_sign(model, X, y, criterion):
     """ 
@@ -48,6 +60,7 @@ def fgsm_grad_sign(model, X, y, criterion):
     loss.backward()
     return perturb.grad.detach().sign()
 
+
 def fgsm_delta(model, X, y, criterion, epsilon):
     """ 
     Construct FGSM adversarial examples on the examples X
@@ -57,8 +70,9 @@ def fgsm_delta(model, X, y, criterion, epsilon):
     delta = epsilon * grad_sign
     return delta
 
-def vis_fgsm_attack(net, images, labels, grad_sign, epsilon, figtype='gray', 
-                    inv_normalize= None, M = 5, start=50, savename=None, figDir=None):
+
+def vis_fgsm_attack(net, images, labels, grad_sign, epsilon, figtype='gray',
+                    inv_normalize=None, M=5, start=50, savename=None, figDir=None):
     """
         create fgsm attach on given images;
         the key parameter is epsilon, which controls the strength of attack
@@ -68,35 +82,36 @@ def vis_fgsm_attack(net, images, labels, grad_sign, epsilon, figtype='gray',
     images_adv = images + delta
     pred_clean = net(images).data.max(1)[1]
     pred_adv = net(images_adv).data.max(1)[1]
-    f,ax = plt.subplots(M,3, sharex=True, sharey=True, figsize=(3,M*1.3))
+    f, ax = plt.subplots(M, 3, sharex=True, sharey=True, figsize=(3, M * 1.3))
     for i in range(M):
         for j in range(3):
             if j == 0:
                 if figtype == 'gray':
-                    ax[i][0].imshow(images[i+start][0].cpu().numpy(), cmap="gray")
+                    ax[i][0].imshow(images[i + start][0].cpu().numpy(), cmap="gray")
                 else:
-                    ax[i][0].imshow(tensorToImg(images[i+start], inv_normalize))
+                    ax[i][0].imshow(tensorToImg(images[i + start], inv_normalize))
                 title = ax[i][j].set_title(f"{labels[i+start]} -> {pred_clean[i+start]}")
-                plt.setp(title, color=('g' if pred_clean[i+start] == labels[i+start] else 'r'))
+                plt.setp(title, color=('g' if pred_clean[i + start] == labels[i + start] else 'r'))
             elif j == 1:
                 if figtype == 'gray':
-                    ax[i][1].imshow(delta[i+start][0].cpu().numpy(), cmap="gray")
+                    ax[i][1].imshow(delta[i + start][0].cpu().numpy(), cmap="gray")
                 else:
-                    ax[i][1].imshow(tensorToImg(delta[i+start], inv_normalize))
+                    ax[i][1].imshow(tensorToImg(delta[i + start], inv_normalize))
                 title = ax[i][j].set_title(r"$\delta$")
             else:
                 if figtype == 'gray':
-                    ax[i][2].imshow(images_adv[i+start][0].cpu().numpy(), cmap="gray")
+                    ax[i][2].imshow(images_adv[i + start][0].cpu().numpy(), cmap="gray")
                 else:
-                    ax[i][2].imshow(tensorToImg(images_adv[i+start], inv_normalize))
+                    ax[i][2].imshow(tensorToImg(images_adv[i + start], inv_normalize))
                 title = ax[i][j].set_title(f"{labels[i+start]} -> {pred_adv[i+start]}")
-                plt.setp(title, color=('g' if pred_adv[i+start] == labels[i+start] else 'r'))
+                plt.setp(title, color=('g' if pred_adv[i + start] == labels[i + start] else 'r'))
             ax[i][j].set_axis_off()
     plt.tight_layout()
     if savename is not None:
         plt.savefig(f'{figDir}/{savename}.png')
         plt.close()
-        
+
+
 def fgsm_testacc(net, testloader, criterion, epsilon, use_cuda):
     """
         evaluate the performance of fgsm attacks
@@ -136,14 +151,15 @@ def fgsm_testacc(net, testloader, criterion, epsilon, use_cuda):
     accuracy = correct / total
     return accuracy, adv_count, adv_examples[:5]
 
+
 def tensorToImg(imgTensor, inv_normalize):
     inv_tensor = inv_normalize(imgTensor)
-    inv_img = (inv_tensor * 255).clamp(0,255)
-    return inv_img.cpu().permute(1,2,0).clone().detach().to(torch.int32)
+    inv_img = (inv_tensor * 255).clamp(0, 255)
+    return inv_img.cpu().permute(1, 2, 0).clone().detach().to(torch.int32)
 
 
-def vis_pgd_attack(net, images, labels, delta, figtype='gray', 
-                    inv_normalize= None, M = 5, start=50, savename=None, figDir=None):
+def vis_pgd_attack(net, images, labels, delta, figtype='gray',
+                   inv_normalize=None, M=5, start=50, savename=None, figDir=None):
     """
         create fgsm attach on given images;
         the key parameter is epsilon, which controls the strength of attack
@@ -151,34 +167,35 @@ def vis_pgd_attack(net, images, labels, delta, figtype='gray',
     images_adv = images + delta
     pred_clean = net(images).data.max(1)[1]
     pred_adv = net(images_adv).data.max(1)[1]
-    f,ax = plt.subplots(M,3, sharex=True, sharey=True, figsize=(3,M*1.3))
+    f, ax = plt.subplots(M, 3, sharex=True, sharey=True, figsize=(3, M * 1.3))
     for i in range(M):
         for j in range(3):
             if j == 0:
                 if figtype == 'gray':
-                    ax[i][0].imshow(images[i+start][0].cpu().numpy(), cmap="gray")
+                    ax[i][0].imshow(images[i + start][0].cpu().numpy(), cmap="gray")
                 else:
-                    ax[i][0].imshow(tensorToImg(images[i+start], inv_normalize))
+                    ax[i][0].imshow(tensorToImg(images[i + start], inv_normalize))
                 title = ax[i][j].set_title(f"{labels[i+start]} -> {pred_clean[i+start]}")
-                plt.setp(title, color=('g' if pred_clean[i+start] == labels[i+start] else 'r'))
+                plt.setp(title, color=('g' if pred_clean[i + start] == labels[i + start] else 'r'))
             elif j == 1:
                 if figtype == 'gray':
-                    ax[i][1].imshow(delta[i+start][0].cpu().numpy(), cmap="gray")
+                    ax[i][1].imshow(delta[i + start][0].cpu().numpy(), cmap="gray")
                 else:
-                    ax[i][1].imshow(tensorToImg(delta[i+start], inv_normalize))
+                    ax[i][1].imshow(tensorToImg(delta[i + start], inv_normalize))
                 title = ax[i][j].set_title(r"$\delta$")
             else:
                 if figtype == 'gray':
-                    ax[i][2].imshow(images_adv[i+start][0].cpu().numpy(), cmap="gray")
+                    ax[i][2].imshow(images_adv[i + start][0].cpu().numpy(), cmap="gray")
                 else:
-                    ax[i][2].imshow(tensorToImg(images_adv[i+start], inv_normalize))
+                    ax[i][2].imshow(tensorToImg(images_adv[i + start], inv_normalize))
                 title = ax[i][j].set_title(f"{labels[i+start]} -> {pred_adv[i+start]}")
-                plt.setp(title, color=('g' if pred_adv[i+start] == labels[i+start] else 'r'))
+                plt.setp(title, color=('g' if pred_adv[i + start] == labels[i + start] else 'r'))
             ax[i][j].set_axis_off()
     plt.tight_layout()
     if savename is not None:
         plt.savefig(f'{figDir}/{savename}.png')
         plt.close()
+
 
 def pgd_delta(model, X, y, criterion, epsilon, alpha, num_iter):
     """ 
@@ -192,9 +209,10 @@ def pgd_delta(model, X, y, criterion, epsilon, alpha, num_iter):
         loss = criterion(model(X + delta), y)
         loss.backward()
         # normalize the gradient
-        delta.data = (delta + alpha*delta.grad.detach().sign()).clamp(-epsilon,epsilon)
+        delta.data = (delta + alpha * delta.grad.detach().sign()).clamp(-epsilon, epsilon)
         delta.grad.zero_()
     return delta.detach()
+
 
 def pgd_testacc(net, testloader, criterion, epsilon, use_cuda, alpha=1e-2, num_iter=40):
     """
@@ -235,12 +253,14 @@ def pgd_testacc(net, testloader, criterion, epsilon, use_cuda, alpha=1e-2, num_i
     return accuracy, adv_count, adv_examples[:5]
 
 
-
-
-
-def simba_cifa10(net, testset, num_imgs=None, batch_size=64, image_size=32, order = 'rand', 
-                 num_iters = -1, targeted = False, stride = 7, epsilon = 0.2, 
-                 linf_bound = 0.0, pixel_attack = True, log_every = 100, return_raw=False):
+def simba_cifa10(net, testset, num_imgs=None, batch_size=64, image_size=32, order='rand',
+                 num_iters=-1, targeted=False, stride=7, epsilon=0.2,
+                 linf_bound=0.0, pixel_attack=True, log_every=100, return_raw=False):
+    """
+        black box attacks; 
+        assume the available information is the output from the softmax layer
+        reference: https://github.com/cg563/simple-blackbox-attack
+    """
     attacker = SimBA(net, 'cifar', image_size)
     freq_dims = image_size
     if not num_imgs:
@@ -295,7 +315,7 @@ def simba_cifa10(net, testset, num_imgs=None, batch_size=64, image_size=32, orde
             all_l2_norms = torch.cat([all_l2_norms, l2_norms], dim=0)
             all_linf_norms = torch.cat([all_linf_norms, linf_norms], dim=0)
     result = {'adv': all_adv, 'probs': all_probs, 'succs': all_succs, 'queries': all_queries,
-            'l2_norms': all_l2_norms, 'linf_norms': all_linf_norms}
+              'l2_norms': all_l2_norms, 'linf_norms': all_linf_norms}
     if return_raw:
         result['raw_images'] = images
         result['raw_labels'] = labels
